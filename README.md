@@ -107,6 +107,7 @@ from a browser. See [docs/MCP.md](docs/MCP.md).
 
 ```bash
 make help          # every target
+make release       # build this commit in-cluster and roll it out, then smoke it
 make test          # unit tests, no external dependencies
 make dev           # a local Redis in Docker + hushd on :18500
 make smoke         # full create → reveal → gone against the local instance

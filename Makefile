@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help fmt vet test test-redis build run dev dev-stop smoke vendor verify ci \
-	mcp mcp-install deploy-manifests deploy-status logs alerts-check
+	mcp mcp-install release deploy-manifests deploy-status logs alerts-check
 
 # Local development Redis. A real server, not a mock: the one-time guarantee
 # rests on GETDEL being atomic, and a fake cannot prove that.
@@ -89,3 +89,6 @@ logs: ## Tail hush's structured logs out of VictoriaLogs
 
 alerts-check: ## Confirm vmalert has loaded hush's rules
 	@./scripts/alerts-check.sh
+
+release: ## Build this commit in-cluster and roll it out, then smoke it. Needs no CI credential.
+	@./scripts/release.sh

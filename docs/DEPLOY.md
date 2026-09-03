@@ -157,8 +157,22 @@ The repo exists on Gitea and `.woodpecker.yml` is committed, but activation
 failed: the `WOODPECKER_API_TOKEN` in `rdev/rdev-credentials` returns
 `401 User not authorized`.
 
-Until a valid token replaces it, **pushes do not deploy** — use the Kaniko Job
-above and `kubectl set image`. To finish it:
+Until a valid token replaces it, **pushes do not deploy**. Rather than leave
+that as a trap, `make release` does exactly what the pipeline's build and deploy
+steps do — Kaniko Job, `set image`, rollout, then the production smoke — and
+needs no CI credential:
+
+```bash
+make release
+```
+
+It refuses on a dirty or unpushed tree, because Kaniko builds from the pushed
+git ref and would otherwise silently build something other than what you are
+looking at. It also asserts the live image equals the one just built, since
+`set image` matching nothing is silent and the rollout would "succeed" on the
+old pod.
+
+To finish the CI wiring:
 
 ```bash
 WP=$(curl -s -H "X-API-Key: $RDEV_API_KEY" "$RDEV_API_URL/credentials/WOODPECKER_API_TOKEN" | jq -r '.data.value')
