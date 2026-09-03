@@ -1,0 +1,249 @@
+# hush on the orchard9 k3s cluster. Apply this BEFORE the first push, because
+# the pipeline's deploy step runs `kubectl set image` and needs a Deployment to
+# set it on.
+#
+#   KUBECONFIG=~/.kube/orchard9-k3sf.yaml kubectl apply -f deployments/k8s/hush.yaml
+#
+# Everything hush needs is here: the credential, the workload, the Service, the
+# network boundary and the public route.
+---
+# The Redis credential. hush connects as its OWN Redis ACL user, scoped to
+# `~hush:*` with a minimal command set (+ping +set +getdel +incr +pexpire
+# +select), so a bug in hush cannot read or write another tenant's keys and a
+# compromise of hush cannot enumerate the keyspace.
+#
+# `+getdel` is the one that needs saying out loud: no other service's ACL user
+# has it, because no other service needs an atomic read-and-destroy. Omitting it
+# makes every reveal fail NOPERM while creates keep working — a service that
+# accepts secrets and cannot deliver them.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: hush-credentials
+  namespace: projects
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: gcp-secret-manager
+    kind: ClusterSecretStore
+  target:
+    name: hush-credentials
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: k3sf-hush-credentials
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hush
+  namespace: projects
+  labels:
+    app: hush
+spec:
+  # One replica is sufficient and not a bottleneck: every request is a single
+  # Redis round trip and all state lives in Redis, so this scales horizontally
+  # whenever it needs to. The rate limiter is already Redis-backed for exactly
+  # that reason.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hush
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: hush
+      annotations:
+        # Metrics scraping. All three are required, and the port must EQUAL a
+        # declared containerPort as a string — vmagent's relabel config uses
+        # `keepequal`, so a mismatch silently drops the target with no error
+        # and no up=0 to alert on.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "18500"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # The chassis drains in two phases — flip readiness to 503, wait 5s for
+      # the load balancer to notice, then shut down with a 25s deadline. That is
+      # 30s, so the grace period must exceed it or the kubelet SIGKILLs mid-drain
+      # and in-flight reveals are lost.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: hushd
+          # `bootstrap` is a placeholder, replaced by CI's `kubectl set image`
+          # with the commit-SHA tag on the first push. It is deliberately NOT
+          # `:latest`: the cluster's stable-controller-images admission policy
+          # refuses latest/main/master/dev/edge/canary/nightly/snapshot, because
+          # a floating tag cannot pin a rollback. Until the first pipeline run
+          # this image does not exist and the pod sits in ImagePullBackOff,
+          # which is the expected bootstrap state.
+          image: registry.threesix.ai/hush/api:bootstrap
+          ports:
+            - name: http
+              containerPort: 18500
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: HUSH_PORT
+              value: "18500"
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: hush-credentials
+                  key: REDIS_URL
+            # One Traefik hop sits in front, so the client IP is the last entry
+            # of X-Forwarded-For. Too high lets a caller spoof their IP past the
+            # rate limit; too low rate-limits the ingress itself and throttles
+            # every user together.
+            - name: HUSH_TRUSTED_PROXY_HOPS
+              value: "1"
+            - name: HUSH_RATE_LIMIT_CREATES
+              value: "30"
+            - name: HUSH_RATE_LIMIT_WINDOW
+              value: 10m
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          # Liveness stays 200 during the drain by design, so this restarts the
+          # pod only when the process is genuinely wedged — never merely because
+          # it is shutting down or because Redis is down.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Readiness pings Redis. A Redis outage takes hush out of the Service
+          # rather than leaving it to serve 500s from a pod the load balancer
+          # still trusts.
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          resources:
+            requests: { memory: 32Mi, cpu: 20m }
+            # 128Mi is generous for a service whose largest allocation is a
+            # 64 KiB ciphertext, and leaves headroom for Go's GC pacing.
+            limits: { memory: 128Mi, cpu: 500m }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hush
+  namespace: projects
+  labels:
+    app: hush
+spec:
+  selector:
+    app: hush
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Default-deny both directions, then open exactly what hush needs. Written as
+# one policy because the ingress and egress rules are a single statement about
+# this pod: Traefik in, DNS and Redis out, nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hush
+  namespace: projects
+spec:
+  podSelector:
+    matchLabels:
+      app: hush
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Public traffic, via Traefik only.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - { protocol: TCP, port: 18500 }
+    # vmagent scrapes /metrics on the pod IP directly. Without this rule the
+    # target is discovered and every scrape is connection-refused, which shows
+    # up as up=0 and fires ScrapeTargetDown rather than as a policy error.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - { protocol: TCP, port: 18500 }
+  egress:
+    # DNS. Redis is a headless Service, so its name resolves to a pod IP that
+    # changes when Redis restarts — this must be re-resolvable, not cached.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Redis, and nothing else. hush makes no other outbound connection: it does
+    # not fetch, does not call a provider, and does not ship its own logs
+    # (Vector reads stdout off the node filesystem).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: databases
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hush
+  namespace: projects
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [hush.threesix.ai]
+      secretName: hush-tls
+  rules:
+    - host: hush.threesix.ai
+      http:
+        paths:
+          # The paths are enumerated deliberately, and `/` is Exact rather than
+          # Prefix. A Prefix `/` would route EVERYTHING, publishing /metrics,
+          # /healthz and /readyz to the internet. /metrics leaks how many
+          # secrets are created and when; the others are just noise. Enumerating
+          # instead means Traefik 404s them at the edge and there is no
+          # basic-auth middleware to maintain and get wrong.
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: hush
+                port: { name: http }
+          - path: /s/
+            pathType: Prefix
+            backend:
+              service:
+                name: hush
+                port: { name: http }
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: hush
+                port: { name: http }

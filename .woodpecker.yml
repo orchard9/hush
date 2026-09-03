@@ -1,0 +1,62 @@
+# hush CI/CD. Origin must be Gitea (git.threesix.ai) — that remote carries the
+# webhook. Pushing to the GitHub mirror does not deploy anything.
+#
+# push to main → test → Kaniko amd64 build → Zot → kubectl set image on `projects`
+
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      depth: 1
+
+steps:
+  test:
+    # 1.26, not the 1.25 in the template: go-chassis declares `go 1.26.0` and an
+    # older toolchain refuses to build it.
+    image: golang:1.26-alpine
+    environment:
+      # Hermetic, and deliberately so. go-chassis is a PRIVATE module and this
+      # container has no git credential, so a build that reached for the network
+      # would fail here — the vendored tree is what makes CI possible at all.
+      # GOPROXY=off turns "silently fetched from a proxy" into a hard error.
+      GOFLAGS: -mod=vendor
+      GOPROXY: "off"
+    commands:
+      - go vet ./...
+      - go test ./...
+      # gofmt as a gate, not a suggestion. -l lists offenders; the test fails if
+      # the list is non-empty. vendor/ is excluded because it is not ours.
+      - test -z "$(gofmt -l ./cmd ./internal)" || { gofmt -l ./cmd ./internal; echo "gofmt"; exit 1; }
+    when:
+      branch: main
+      event: push
+
+  build:
+    image: woodpeckerci/plugin-kaniko
+    settings:
+      registry: registry.threesix.ai
+      repo: hush/api
+      tags:
+        - latest
+        # SHA-tagged as well as latest: `latest` cannot pin a rollback.
+        - ${CI_COMMIT_SHA:0:8}
+      context: .
+      dockerfile: Dockerfile
+      cache: true
+      skip_tls_verify: true # internal Zot registry, self-signed cert
+    when:
+      branch: main
+      event: push
+
+  deploy:
+    image: bitnami/kubectl:latest
+    commands:
+      - kubectl set image deployment/hush hushd=registry.threesix.ai/hush/api:${CI_COMMIT_SHA:0:8} -n projects
+      - kubectl rollout status deployment/hush -n projects --timeout=120s
+      # Prove the rolled pod actually serves, not merely that it became Ready.
+      # A pod can pass readiness and still be the wrong image if `set image`
+      # silently matched nothing.
+      - kubectl -n projects get deployment hush -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+    when:
+      branch: main
+      event: push

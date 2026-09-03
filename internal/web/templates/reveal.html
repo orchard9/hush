@@ -1,0 +1,118 @@
+{{define "content"}}
+<h1>hush<span>.</span></h1>
+<p class="lede">Someone sent you a secret. It can be opened once.</p>
+
+<div id="gate">
+  <p class="note">
+    Nothing has been read yet. This page has not touched the secret — opening it
+    is the button below, so a link preview in a chat app cannot consume it.
+  </p>
+  <button id="go">Reveal the secret</button>
+  <p class="note" id="msg"></p>
+</div>
+
+<div id="result" class="hide">
+  <label>The secret</label>
+  <div class="out" id="plain"></div>
+  <div class="row">
+    <button id="copy">Copy</button>
+  </div>
+  <p class="note warn">
+    Destroyed. Reloading this page will not show it again — copy it now.
+  </p>
+</div>
+{{end}}
+
+{{define "script"}}
+<script>
+const $ = (id) => document.getElementById(id);
+
+// The id comes from the path and the key from the fragment. Neither is
+// interpolated by the server, so this page renders identically for every secret
+// and reflects nothing.
+const id = location.pathname.replace(/^\/s\//, "");
+const key = location.hash.slice(1);
+
+if (!key) {
+  $("go").disabled = true;
+  $("msg").className = "note err";
+  $("msg").textContent =
+    "This link is missing its key — the part after '#'. Chat apps and email " +
+    "clients sometimes truncate it. Ask the sender for the full link; the " +
+    "secret is intact and has not been opened.";
+}
+
+async function reveal() {
+  $("go").disabled = true;
+  $("msg").className = "note";
+  $("msg").textContent = "Opening…";
+
+  let res, body;
+  try {
+    res = await fetch("/api/secrets/" + encodeURIComponent(id) + "/reveal", { method: "POST" });
+    body = await res.json();
+  } catch (e) {
+    // The secret is very likely consumed at this point, so do not offer a retry
+    // that would report "gone" and read as a lie about what happened.
+    $("msg").className = "note err";
+    $("msg").textContent = "Could not reach hush: " + e.message +
+      ". If the request left your browser, the secret is already destroyed.";
+    return;
+  }
+
+  if (res.status === 410) {
+    $("msg").className = "note err";
+    $("msg").textContent =
+      "Gone. This link was already opened, expired, or never existed. " +
+      "If you have not opened it yourself, assume someone else did and ask the " +
+      "sender to rotate the secret.";
+    return;
+  }
+  if (!res.ok) {
+    $("go").disabled = false;
+    $("msg").className = "note err";
+    $("msg").textContent = body && body.error ? body.error.message : "Server error (" + res.status + ").";
+    return;
+  }
+
+  let text;
+  try {
+    text = await open(body.ciphertext, key);
+  } catch {
+    // Decryption failed AFTER the server destroyed the ciphertext, so there is
+    // nothing to retry. Say so, because the alternative is a user reloading
+    // forever against a secret that no longer exists.
+    $("msg").className = "note err";
+    $("msg").textContent =
+      "The key in this link does not open this secret, and the ciphertext has " +
+      "now been destroyed. The link was probably altered in transit. Ask the " +
+      "sender to create a new one.";
+    return;
+  }
+
+  $("plain").textContent = text;
+  $("gate").classList.add("hide");
+  $("result").classList.remove("hide");
+  // Drop the key from the address bar so a screenshot, a shoulder-surfer or a
+  // later copy of the URL does not carry it. The secret is already destroyed
+  // server-side, so this only reduces incidental exposure.
+  history.replaceState(null, "", location.pathname);
+  $("copy").focus();
+}
+
+$("go").addEventListener("click", reveal);
+$("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("plain").textContent);
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy"), 1500);
+  } catch {
+    const r = document.createRange();
+    r.selectNodeContents($("plain"));
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    $("copy").textContent = "Selected — press copy";
+  }
+});
+</script>
+{{end}}

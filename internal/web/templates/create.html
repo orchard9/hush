@@ -1,0 +1,118 @@
+{{define "content"}}
+<h1>hush<span>.</span></h1>
+<p class="lede">Paste a secret. Get a link that works once.</p>
+
+<div id="form">
+  <label for="secret">Secret</label>
+  <textarea id="secret" autofocus autocomplete="off" spellcheck="false"
+            placeholder="API key, password, connection string…"></textarea>
+
+  <div class="row">
+    <div>
+      <label for="ttl">Expires after</label>
+      <select id="ttl">
+        <option value="900">15 minutes</option>
+        <option value="3600">1 hour</option>
+        <option value="86400" selected>24 hours</option>
+        <option value="259200">3 days</option>
+        <option value="604800">7 days</option>
+      </select>
+    </div>
+  </div>
+
+  <button id="go">Create link</button>
+  <p class="note" id="msg"></p>
+</div>
+
+<div id="result" class="hide">
+  <label>Your one-time link</label>
+  <div class="out" id="link"></div>
+  <div class="row">
+    <button id="copy">Copy link</button>
+    <button id="again" class="secondary">Create another</button>
+  </div>
+  <p class="note warn">
+    This is shown once and is not recoverable — hush cannot rebuild it, because
+    the key it contains was never sent to the server. Copy it now.
+  </p>
+</div>
+{{end}}
+
+{{define "script"}}
+<script>
+const $ = (id) => document.getElementById(id);
+const MAX = {{.MaxCiphertextBytes}};
+
+async function create() {
+  const text = $("secret").value;
+  if (!text) { return fail("Nothing to send."); }
+
+  $("go").disabled = true;
+  $("msg").className = "note";
+  $("msg").textContent = "Encrypting…";
+
+  let sealed;
+  try {
+    sealed = await seal(text);
+  } catch (e) {
+    return fail("Encryption failed in this browser: " + e.message);
+  }
+
+  // Check the size of the CIPHERTEXT, which is what the server caps, so the
+  // message names the same number the server would reject on.
+  if (sealed.ciphertext.length > MAX) {
+    return fail("Too large: " + sealed.ciphertext.length + " > " + MAX + " bytes encrypted.");
+  }
+
+  let res, body;
+  try {
+    res = await fetch("/api/secrets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ciphertext: sealed.ciphertext, ttl_seconds: Number($("ttl").value) }),
+    });
+    body = await res.json();
+  } catch (e) {
+    return fail("Could not reach hush: " + e.message);
+  }
+  if (!res.ok) {
+    return fail(body && body.error ? body.error.message : "Server refused the secret (" + res.status + ").");
+  }
+
+  // The key goes in the fragment and ONLY in the fragment. Assembling the URL
+  // here — not on the server — is what keeps the key client-side.
+  const url = location.origin + "/s/" + body.id + "#" + sealed.key;
+  $("link").textContent = url;
+  $("form").classList.add("hide");
+  $("result").classList.remove("hide");
+  $("copy").focus();
+}
+
+function fail(m) {
+  $("go").disabled = false;
+  $("msg").className = "note err";
+  $("msg").textContent = m;
+}
+
+$("go").addEventListener("click", create);
+$("secret").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") create();
+});
+$("copy").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("link").textContent);
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy link"), 1500);
+  } catch {
+    // Clipboard needs a permission this browser withheld; selecting the text
+    // is a working fallback rather than a dead button.
+    const r = document.createRange();
+    r.selectNodeContents($("link"));
+    getSelection().removeAllRanges();
+    getSelection().addRange(r);
+    $("copy").textContent = "Selected — press copy";
+  }
+});
+$("again").addEventListener("click", () => location.assign("/"));
+</script>
+{{end}}
