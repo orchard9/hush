@@ -40,9 +40,13 @@ wrong tool — use a channel with identity.
 ### In a browser
 
 1. Open <https://hush.threesix.ai>.
-2. Paste the secret, pick a lifetime, press **Create link**.
+2. Paste the secret, press **create a secret**.
 3. Copy the link and send it however you like.
-4. The recipient opens it, presses **Reveal**, and reads it once.
+4. The recipient opens it, presses **reveal the secret**, and reads it once.
+
+There is no lifetime picker: the page offers one action, and the server applies
+its default TTL (24 hours). `ttl_seconds` on the API is where a caller that
+cares chooses.
 
 ### Why there is a button
 

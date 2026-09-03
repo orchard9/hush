@@ -132,6 +132,37 @@ the panic recovery envelope, RED metrics, secure headers, the two-phase drain,
 and `/healthz`, `/readyz`, `/metrics`. hush contributes handlers, a store, a
 rate limiter and templates — not a framework.
 
+### The pages override the chassis CSP
+
+The chassis policy is written for a JSON API: `default-src 'none';
+frame-ancestors 'none'`. The two pages are HTML with inline script and inline
+style, so `internal/web.render` replaces that header with a per-response
+nonce policy:
+
+```
+default-src 'none'; script-src 'nonce-<r>'; style-src 'nonce-<r>';
+connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'
+```
+
+Three decisions, each with a failure it prevents:
+
+- **A header, and only a header.** Two policies delivered on one response
+  intersect, so a permissive `<meta>` cannot re-enable what the header forbids.
+  Shipping both is how the pages ended up with their own crypto and their own
+  `fetch` blocked while the `<meta>` read as permitted. `frame-ancestors` is
+  also ignored outright in `<meta>`, so it exists only as a header.
+- **A nonce, not `'unsafe-inline'`.** The guarantee is that nothing but this
+  reviewed same-document script can reach the key in the fragment;
+  `'unsafe-inline'` would extend that permission to anything an injection got
+  onto the page.
+- **Fresh per response, url-alphabet base64.** A reused nonce is worth
+  `'unsafe-inline'` to an attacker who can wait for the next load, and `+` or
+  `/` in the value would be escaped to character references inside the HTML
+  attribute, making what the browser enforces depend on entity decoding. The
+  nonce is fixed-length, so it adds no id-correlated variation to the reveal
+  page — `TestTheRevealPageDoesNotDiscloseWhetherASecretExists` compares the
+  page with it masked and asserts constant length.
+
 The public Ingress routes `/` (exact), `/s/` and `/api/` only. `/metrics`,
 `/healthz` and `/readyz` share the port but are unreachable from the internet;
 vmagent scrapes the pod IP directly. This is why there is no metrics basic-auth

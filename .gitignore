@@ -1,2 +1,20 @@
 .build/
 *.tmp
+
+# Secrets: never tracked, never in a build context
+.env
+.env.*
+!.env.example
+.envault/
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+
+# Editor and OS noise
+.idea/
+.vscode/
+*.swp
+.DS_Store

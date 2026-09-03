@@ -1,0 +1,14 @@
+# Allowlist, not a blocklist. The build stage COPYs exactly go.mod, go.sum,
+# vendor/, cmd/ and internal/ — so anything else in the context is bytes Kaniko
+# uploads for nothing, and a `.env` or key dropped in the tree is one a build
+# layer can never capture. A blocklist forgets the file nobody predicted.
+*
+!go.mod
+!go.sum
+!vendor
+!cmd
+!internal
+
+# Kaniko reads this before the context is filtered; allowlisted so the two
+# cannot disagree.
+!Dockerfile
