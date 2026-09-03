@@ -131,6 +131,11 @@ func TestGettingTheRevealPageNeverConsumesTheSecret(t *testing.T) {
 // The reveal page must be identical for every id, including ids that were never
 // minted. If it 404'd on an unknown id it would become an oracle for whether a
 // link was ever real.
+//
+// Compared with the CSP nonce masked out: it is fresh per RESPONSE, so it makes
+// two loads of the same id differ too. Masking it keeps the assertion on the
+// property that matters — that nothing in the page varies with the id — instead
+// of weakening to a substring check.
 func TestTheRevealPageDoesNotDiscloseWhetherASecretExists(t *testing.T) {
 	h, _ := testApp(t)
 	id := create(t, h, ciphertext("real"))
@@ -139,10 +144,32 @@ func TestTheRevealPageDoesNotDiscloseWhetherASecretExists(t *testing.T) {
 	_, _, fake := do(t, h, http.MethodGet, "/s/"+strings.Repeat("A", 43), "")
 	_, _, junk := do(t, h, http.MethodGet, "/s/not-an-id", "")
 
-	if real != fake || real != junk {
+	if maskNonce(real) != maskNonce(fake) || maskNonce(real) != maskNonce(junk) {
 		t.Fatal("the reveal page differs between a real id, a well-formed unknown id, and junk — " +
 			"it must not disclose existence")
 	}
+	// Equal after masking AND equal in length: a variable-length nonce would
+	// leak nothing about the id, but it would make Content-Length vary, and the
+	// masking above would hide that.
+	if len(real) != len(fake) || len(real) != len(junk) {
+		t.Fatalf("the reveal page's length varies with the id: %d, %d, %d", len(real), len(fake), len(junk))
+	}
+}
+
+// maskNonce replaces every occurrence of the page's own CSP nonce with a fixed
+// token, so two responses can be compared for everything else.
+func maskNonce(page string) string {
+	const marker = `nonce="`
+	i := strings.Index(page, marker)
+	if i < 0 {
+		return page
+	}
+	rest := page[i+len(marker):]
+	j := strings.IndexByte(rest, '"')
+	if j < 0 {
+		return page
+	}
+	return strings.ReplaceAll(page, rest[:j], "NONCE")
 }
 
 // A malformed id must produce the SAME 410 as a missing one. A 400 here would
@@ -291,4 +318,93 @@ func TestPagesAreNotCacheable(t *testing.T) {
 			t.Fatalf("%s Referrer-Policy = %q, want no-referrer — a click could otherwise leak the URL", path, ref)
 		}
 	}
+}
+
+// The pages carry inline script and inline style, and the chassis sets a JSON
+// API policy (`default-src 'none'`) on every response. Two policies on one
+// response INTERSECT: when this override regresses, the browser blocks the
+// page's own crypto and its fetch to /api, and every other test here still
+// passes because the HTML is byte-identical. This is that regression.
+func TestPagesSendOneNonceCSPThatPermitsTheirOwnInlineCode(t *testing.T) {
+	h, _ := testApp(t)
+
+	for _, path := range []string{"/", "/s/" + strings.Repeat("A", 43)} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+
+		got := w.Header().Values("Content-Security-Policy")
+		if len(got) != 1 {
+			t.Fatalf("%s sent %d CSP headers %q, want exactly 1 — policies intersect, so a second one only subtracts", path, len(got), got)
+		}
+		policy := got[0]
+
+		nonce := cspNonce(t, path, policy)
+		body := w.Body.String()
+
+		// Every inline block must carry this response's nonce. A single
+		// unnonced <script> is a page whose crypto the browser refuses.
+		for _, tag := range []string{"<script", "<style"} {
+			for rest := body; ; {
+				i := strings.Index(rest, tag)
+				if i < 0 {
+					break
+				}
+				rest = rest[i+len(tag):]
+				open := rest
+				if end := strings.IndexByte(open, '>'); end >= 0 {
+					open = open[:end]
+				}
+				if !strings.Contains(open, `nonce="`+nonce+`"`) {
+					t.Fatalf("%s has a %s> tag without this response's nonce: %s>", path, tag, tag+open)
+				}
+			}
+		}
+
+		// connect-src is what lets the page reach its own API; frame-ancestors
+		// only works as a header, which is why the policy is one.
+		for _, want := range []string{"connect-src 'self'", "frame-ancestors 'none'", "base-uri 'none'"} {
+			if !strings.Contains(policy, want) {
+				t.Fatalf("%s CSP %q is missing %q", path, policy, want)
+			}
+		}
+		if strings.Contains(policy, "unsafe-inline") {
+			t.Fatalf("%s CSP allows unsafe-inline: %q — any injected script could then read the key from the fragment", path, policy)
+		}
+		// A CSP <meta> cannot loosen the header and cannot express
+		// frame-ancestors, so its only effect is confusion.
+		if strings.Contains(body, "http-equiv=\"Content-Security-Policy\"") {
+			t.Fatalf("%s still ships a CSP <meta>", path)
+		}
+	}
+
+	// A nonce reused across responses is worth the same as 'unsafe-inline' to
+	// an injection that can wait for the next page load.
+	first, second := getCSP(t, h, "/"), getCSP(t, h, "/")
+	if cspNonce(t, "/", first) == cspNonce(t, "/", second) {
+		t.Fatalf("the CSP nonce is reused across responses: %q", first)
+	}
+}
+
+func getCSP(t *testing.T, h http.Handler, path string) string {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w.Header().Get("Content-Security-Policy")
+}
+
+func cspNonce(t *testing.T, path, policy string) string {
+	t.Helper()
+	const marker = "script-src 'nonce-"
+	i := strings.Index(policy, marker)
+	if i < 0 {
+		t.Fatalf("%s CSP %q has no script-src nonce — the chassis API policy is still in force", path, policy)
+	}
+	rest := policy[i+len(marker):]
+	j := strings.IndexByte(rest, '\'')
+	if j <= 0 {
+		t.Fatalf("%s CSP %q has a malformed nonce source", path, policy)
+	}
+	return rest[:j]
 }

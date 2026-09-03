@@ -151,16 +151,47 @@ spec:
 
 The git context needs no credential because the Gitea repo is public.
 
-## Woodpecker is NOT yet activated
+## Woodpecker: activated
 
-The repo exists on Gitea and `.woodpecker.yml` is committed, but activation
-failed: the `WOODPECKER_API_TOKEN` in `rdev/rdev-credentials` returns
-`401 User not authorized`.
+`jordan/hush` is repo 139 in Woodpecker, active, with the webhook installed on
+the Gitea side. A push to `main` builds and deploys.
 
-Until a valid token replaces it, **pushes do not deploy**. Rather than leave
-that as a trap, `make release` does exactly what the pipeline's build and deploy
-steps do — Kaniko Job, `set image`, rollout, then the production smoke — and
-needs no CI credential:
+Activation is `POST /api/repos?forge_remote_id=<numeric gitea repo id>` — the
+**numeric** id (183 here), not `owner/name`:
+
+```bash
+GID=$(curl -s -H "Authorization: token $THREE_SIX_GITEA" \
+        https://git.threesix.ai/api/v1/repos/jordan/hush | jq -r .id)
+curl -X POST "https://ci.threesix.ai/api/repos?forge_remote_id=$GID" \
+  -H "Authorization: Bearer $THREE_SIX_WOODPECKER"
+```
+
+### The credential
+
+Use **`$THREE_SIX_WOODPECKER`** (and `$THREE_SIX_GITEA` for Gitea). Both are in
+the operator's environment.
+
+The copy in `rdev/rdev-credentials` was stale and returned
+`401 User not authorized` on `/api/user` — which is worth knowing how to
+diagnose, because a 401 on `POST /api/repos` looks exactly like a malformed
+`forge_remote_id`. `GET /api/user` separates the two: it is auth-only, so a 401
+there is the token and a 200 there means the request shape is what is wrong.
+
+That stale copy is **fixed at the source**: `k3sf-rdev-admin-key` in GCP Secret
+Manager (property `WOODPECKER_API_TOKEN`) now carries the working token, ESO
+resynced it, and the token read out of `rdev/rdev-credentials` returns 200. The
+other properties in that secret were preserved. Do not patch the k8s Secret
+directly — it is ESO-owned and a direct edit is reverted on the next refresh.
+
+```bash
+# force a resync rather than waiting out refreshInterval: 1h
+kubectl -n rdev annotate externalsecret rdev-credentials force-sync="$(date +%s)" --overwrite
+```
+
+### `make release` — the path that needs no CI credential
+
+Still useful with CI working: it is the hotfix and rollback path when the
+pipeline is down, and it was how the first deploy happened.
 
 ```bash
 make release
@@ -171,16 +202,6 @@ git ref and would otherwise silently build something other than what you are
 looking at. It also asserts the live image equals the one just built, since
 `set image` matching nothing is silent and the rollout would "succeed" on the
 old pod.
-
-To finish the CI wiring:
-
-```bash
-WP=$(curl -s -H "X-API-Key: $RDEV_API_KEY" "$RDEV_API_URL/credentials/WOODPECKER_API_TOKEN" | jq -r '.data.value')
-curl -X POST "https://ci.threesix.ai/api/repos?forge_remote_id=jordan/hush" -H "Authorization: Bearer $WP"
-```
-
-A fresh token comes from Woodpecker → User Settings → Token, and belongs back in
-rdev rather than anywhere else.
 
 ## Rollback
 

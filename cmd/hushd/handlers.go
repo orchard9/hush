@@ -20,15 +20,14 @@ type Server struct {
 	metrics *Metrics
 }
 
-// pageData is the same for every render: the limits, so the browser enforces
-// what the server enforces. It carries nothing request-specific, which is why
-// both pages are safely static.
+// pageData is the same for every render: the ciphertext cap, so the browser
+// enforces what the server enforces, and the default lifetime, so the page
+// states the TTL the server will apply. It carries nothing request-specific,
+// which is why both pages are safely static.
 func (s *Server) pageData() web.Data {
 	return web.Data{
 		MaxCiphertextBytes: secret.MaxCiphertextBytes,
 		DefaultTTLSeconds:  int(secret.DefaultTTL.Seconds()),
-		MinTTLSeconds:      int(secret.MinTTL.Seconds()),
-		MaxTTLSeconds:      int(secret.MaxTTL.Seconds()),
 	}
 }
 

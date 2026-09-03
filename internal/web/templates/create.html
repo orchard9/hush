@@ -1,45 +1,27 @@
 {{define "content"}}
 <h1>hush<span>.</span></h1>
-<p class="lede">Paste a secret. Get a link that works once.</p>
+<p class="lede" id="lede">Paste a secret. Get a link that works once.</p>
 
 <div id="form">
-  <label for="secret">Secret</label>
-  <textarea id="secret" autofocus autocomplete="off" spellcheck="false"
+  <textarea id="secret" aria-label="Secret" autofocus autocomplete="off" spellcheck="false"
             placeholder="API key, password, connection string…"></textarea>
-
-  <div class="row">
-    <div>
-      <label for="ttl">Expires after</label>
-      <select id="ttl">
-        <option value="900">15 minutes</option>
-        <option value="3600">1 hour</option>
-        <option value="86400" selected>24 hours</option>
-        <option value="259200">3 days</option>
-        <option value="604800">7 days</option>
-      </select>
-    </div>
-  </div>
-
-  <button id="go">Create link</button>
-  <p class="note" id="msg"></p>
+  <button id="go">create a secret</button>
+  <p class="note" id="msg">Opens once, then it is gone. Expires in {{.DefaultTTL}} if nobody opens it.</p>
 </div>
 
 <div id="result" class="hide">
-  <label>Your one-time link</label>
   <div class="out" id="link"></div>
   <div class="row">
-    <button id="copy">Copy link</button>
-    <button id="again" class="secondary">Create another</button>
+    <button id="copy">copy link</button>
+    <button id="again" class="ghost">create another</button>
   </div>
-  <p class="note warn">
-    This is shown once and is not recoverable — hush cannot rebuild it, because
-    the key it contains was never sent to the server. Copy it now.
-  </p>
+  <p class="note warn">Shown once — hush cannot rebuild it, because the key it
+    carries was never sent to the server.</p>
 </div>
 {{end}}
 
 {{define "script"}}
-<script>
+<script nonce="{{.Nonce}}">
 const $ = (id) => document.getElementById(id);
 const MAX = {{.MaxCiphertextBytes}};
 
@@ -66,10 +48,13 @@ async function create() {
 
   let res, body;
   try {
+    // No ttl_seconds: the page offers no lifetime choice, so the server applies
+    // its default. Sending a number here would be a second copy of it, free to
+    // drift from the one the page prints.
     res = await fetch("/api/secrets", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ciphertext: sealed.ciphertext, ttl_seconds: Number($("ttl").value) }),
+      body: JSON.stringify({ ciphertext: sealed.ciphertext }),
     });
     body = await res.json();
   } catch (e) {
@@ -82,6 +67,10 @@ async function create() {
   // The key goes in the fragment and ONLY in the fragment. Assembling the URL
   // here — not on the server — is what keeps the key client-side.
   const url = location.origin + "/s/" + body.id + "#" + sealed.key;
+
+  // The lede describes the state the card is in. Left alone it would still say
+  // "paste a secret" next to a finished link.
+  $("lede").textContent = "Your one-time link.";
   $("link").textContent = url;
   $("form").classList.add("hide");
   $("result").classList.remove("hide");
@@ -101,8 +90,8 @@ $("secret").addEventListener("keydown", (e) => {
 $("copy").addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText($("link").textContent);
-    $("copy").textContent = "Copied";
-    setTimeout(() => ($("copy").textContent = "Copy link"), 1500);
+    $("copy").textContent = "copied";
+    setTimeout(() => ($("copy").textContent = "copy link"), 1500);
   } catch {
     // Clipboard needs a permission this browser withheld; selecting the text
     // is a working fallback rather than a dead button.
@@ -110,7 +99,7 @@ $("copy").addEventListener("click", async () => {
     r.selectNodeContents($("link"));
     getSelection().removeAllRanges();
     getSelection().addRange(r);
-    $("copy").textContent = "Selected — press copy";
+    $("copy").textContent = "selected — press copy";
   }
 });
 $("again").addEventListener("click", () => location.assign("/"));

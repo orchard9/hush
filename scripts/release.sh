@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Build the current commit in-cluster and roll it out. No CI credential needed.
 #
-# This exists because Woodpecker is not activated for this repo (its API token
-# in rdev returns 401, and minting a new one needs a browser login). Rather than
-# leave "git push does not deploy" as a trap for whoever pushes next, this does
-# exactly what the pipeline's build+deploy steps do: a Kaniko Job for an amd64
-# image, then `kubectl set image`, then a real end-to-end check.
+# Woodpecker IS activated for this repo, so a push to main builds and deploys.
+# This is the path for when you do not want to wait for CI, when CI is down, or
+# when you are rolling back — and it is how the first deploy happened, before
+# activation. It does exactly what the pipeline's build and deploy steps do: a
+# Kaniko Job for an amd64 image from the pushed git ref, then
+# `kubectl set image`, then a real end-to-end check.
 #
-# When Woodpecker is activated this becomes redundant, and that is fine — it is
-# also the manual path for a rollback or a hotfix when CI is down.
+# Credentials: none. The Gitea repo is public so the Kaniko git context needs no
+# token, and the rollout uses your kubeconfig.
 #
 #   ./scripts/release.sh
 set -euo pipefail

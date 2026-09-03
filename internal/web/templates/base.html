@@ -4,50 +4,96 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hush</title>
-<!-- No external origins: no CDN, no font host, no analytics. A third-party
-     script on this page could read the key out of the fragment, so the CSP
-     forbids one existing. 'unsafe-inline' covers the inline script and style
-     below, which are same-document and reviewed in this repo. -->
-<meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta name="color-scheme" content="dark">
 <meta name="referrer" content="no-referrer">
-<style>
-:root{color-scheme:dark;--bg:#0b0d10;--fg:#e7ebf0;--dim:#8b95a3;--line:#1e242c;--accent:#7fd1ae;--warn:#f0b866;--bad:#e8737d}
+<!-- The policy is a HEADER, set in internal/web/web.go, and every inline block
+     below carries that response's nonce. There is deliberately no CSP <meta>
+     here: two policies on one response intersect, so a <meta> cannot loosen the
+     header, and it silently made this page's own script look permitted while
+     the browser blocked it. No external origins either — no CDN, no font host,
+     no analytics: a third-party script on this page could read the key out of
+     the fragment. -->
+<style nonce="{{.Nonce}}">
+:root{
+  color-scheme:dark;
+  --bg:#08090a;          /* page */
+  --panel:#0e1012;       /* the one card */
+  --inset:#0a0b0c;       /* fields and output, recessed from the card */
+  --line:#1c1e22;        /* hairline */
+  --line-lit:#2b2f35;    /* hairline, hovered or focused */
+  --fg:#f1f2f4;
+  --dim:#8d939d;         /* supporting copy */
+  --faint:#5d626b;       /* placeholder, footer */
+  --accent:#8ce0b8;      /* used sparingly: the mark, focus, success */
+  --warn:#f2c078;
+  --bad:#ff8189;
+  --r:12px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}
-main{width:100%;max-width:620px}
-h1{font-size:20px;margin:0 0 4px;letter-spacing:.02em}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  font-feature-settings:"kern" 1;-webkit-font-smoothing:antialiased;
+  display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px;
+}
+main{width:100%;max-width:440px}
+.card{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r);
+  padding:28px 26px;box-shadow:0 30px 60px -40px #000,0 1px 0 #ffffff05 inset;
+}
+h1{font-size:21px;font-weight:600;letter-spacing:-.02em;margin:0 0 6px}
 h1 span{color:var(--accent)}
-p.lede{color:var(--dim);margin:0 0 24px;font-size:13px}
-label{display:block;font-size:12px;color:var(--dim);margin:16px 0 6px;text-transform:uppercase;letter-spacing:.08em}
-textarea,input,select,button{font:inherit;color:var(--fg);background:#12161b;border:1px solid var(--line);border-radius:6px;padding:10px 12px;width:100%}
-textarea{min-height:150px;resize:vertical}
-button{background:var(--accent);color:#06231a;border:0;font-weight:600;cursor:pointer;margin-top:20px;padding:12px}
-button:hover{filter:brightness(1.08)}
-button:disabled{opacity:.5;cursor:not-allowed;filter:none}
-button.secondary{background:#12161b;color:var(--fg);border:1px solid var(--line);font-weight:400}
-.row{display:flex;gap:12px}
+p.lede{color:var(--dim);margin:0 0 22px;font-size:13.5px}
+textarea,button{font:inherit;width:100%;border-radius:10px}
+textarea{
+  color:var(--fg);background:var(--inset);border:1px solid var(--line);
+  font:13px/1.55 var(--mono);padding:13px 14px;min-height:132px;resize:vertical;
+  transition:border-color .12s,box-shadow .12s;
+}
+textarea::placeholder{color:var(--faint)}
+textarea:hover{border-color:var(--line-lit)}
+textarea:focus,button:focus-visible{outline:0;border-color:var(--line-lit);box-shadow:0 0 0 3px #8ce0b81f}
+button{
+  margin-top:14px;padding:11px 16px;border:1px solid transparent;
+  background:var(--fg);color:#08090a;font-weight:600;font-size:14px;
+  cursor:pointer;transition:background .12s,border-color .12s,color .12s,opacity .12s;
+}
+button:hover:not(:disabled){background:#fff}
+button:active:not(:disabled){transform:translateY(.5px)}
+/* A disabled solid button is a grey slab that still dominates the card and
+   reads as "loading" rather than "not now". It recedes instead. */
+button:disabled{background:none;color:var(--faint);border-color:var(--line);cursor:not-allowed}
+button.ghost{background:none;color:var(--dim);border-color:var(--line);font-weight:500}
+button.ghost:hover{background:none;color:var(--fg);border-color:var(--line-lit)}
+.row{display:flex;gap:10px}
 .row>*{flex:1}
-.out{margin-top:24px;padding:14px;border:1px solid var(--line);border-radius:6px;background:#0f1418;word-break:break-all;font-size:13px}
-.note{color:var(--dim);font-size:12px;margin-top:10px}
-.err{color:var(--bad)}
-.warn{color:var(--warn)}
-.ok{color:var(--accent)}
+.out{
+  background:var(--inset);border:1px solid var(--line);border-radius:10px;
+  padding:13px 14px;font:13px/1.6 var(--mono);word-break:break-all;
+  white-space:pre-wrap;user-select:all;
+}
+.note{color:var(--dim);font-size:12.5px;line-height:1.5;margin:12px 0 0}
+.note.err{color:var(--bad)}
+.note.warn{color:var(--warn)}
 .hide{display:none}
-footer{margin-top:28px;color:var(--dim);font-size:11px;border-top:1px solid var(--line);padding-top:12px}
-a{color:var(--dim)}
+footer{margin:14px 2px 0;color:var(--faint);font-size:11.5px;line-height:1.5}
+footer code{font:11px var(--mono);color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <main>
+<div class="card">
 {{template "content" .}}
+</div>
 <footer>
   Encrypted in your browser. The key travels in the link's <code>#fragment</code>,
-  which browsers never send to a server — hush stores ciphertext it cannot open.
-  The link works once.
+  which browsers never send to a server.
 </footer>
 </main>
-<script>
+<script nonce="{{.Nonce}}">
 // Shared crypto. AES-256-GCM via WebCrypto; the key is generated here, never
 // transmitted, and carried only in the URL fragment.
 //
