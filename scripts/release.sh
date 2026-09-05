@@ -88,12 +88,35 @@ spec:
             limits: { cpu: "2", memory: 3Gi }
 EOF
 
+# Poll rather than `kubectl wait --for=condition=complete`. That is one long
+# WATCH against a cluster on the other side of a WAN link: measured 2026-09-05,
+# the Job reached Complete in 156s and the watch still sat there until its
+# 900s timeout, then reported "build FAILED" for an image that had already been
+# pushed. Each poll below is a fresh short request, so a dropped connection
+# costs one poll — and a deadline here means "still building", never "failed".
 echo "  building (amd64, in-cluster)…"
-if ! kubectl -n "$NS" wait --for=condition=complete "job/$JOB" --timeout=900s >/dev/null 2>&1; then
-  echo "build FAILED — last lines:" >&2
-  kubectl -n "$NS" logs "job/$JOB" --tail=30 >&2
-  exit 1
-fi
+DEADLINE=$((SECONDS + 900))
+while :; do
+  # A missing field prints nothing, so default to 0 and keep the comparison
+  # numeric. `|| true` covers a poll that loses the connection outright.
+  SUCCEEDED=$(kubectl -n "$NS" get "job/$JOB" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)
+  FAILED=$(kubectl -n "$NS" get "job/$JOB" -o jsonpath='{.status.failed}' 2>/dev/null || true)
+  if [ "${SUCCEEDED:-0}" -ge 1 ]; then
+    break
+  fi
+  if [ "${FAILED:-0}" -ge 1 ]; then
+    echo "build FAILED — last lines:" >&2
+    kubectl -n "$NS" logs "job/$JOB" --tail=30 >&2
+    exit 1
+  fi
+  if [ "$SECONDS" -ge "$DEADLINE" ]; then
+    echo "the build has not finished after 900s. It may still be running:" >&2
+    echo "  kubectl -n $NS get job/$JOB" >&2
+    echo "  kubectl -n $NS logs job/$JOB --tail=30" >&2
+    exit 1
+  fi
+  sleep 5
+done
 echo "  built $IMAGE"
 
 kubectl -n "$NS" set image deployment/hush "hushd=$IMAGE" >/dev/null
