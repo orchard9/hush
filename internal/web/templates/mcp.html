@@ -1,0 +1,204 @@
+{{define "styles"}}
+<style nonce="{{.Nonce}}">
+/* Doc-page-only CSS. It lives here rather than in base.html so the create and
+   reveal pages ship no bytes for prose they do not contain — and so these
+   selectors can name bare elements without touching those pages. */
+main{
+  max-width:720px;
+  /* body centres its one item vertically; a page taller than the viewport has
+     to start at the top instead. */
+  align-self:flex-start;margin:8px 0 28px;
+}
+.card{padding:30px 30px 26px}
+h2{
+  font-size:14px;font-weight:600;letter-spacing:-.01em;color:var(--fg);
+  margin:28px 0 10px;padding-top:22px;border-top:1px solid var(--line);
+}
+h3{font-size:13px;font-weight:600;margin:20px 0 7px;color:var(--fg)}
+p{color:var(--dim);font-size:13.5px;margin:0 0 11px}
+ul{margin:0 0 12px;padding-left:17px;color:var(--dim);font-size:13.5px}
+li{margin:0 0 7px}
+pre{
+  background:var(--inset);border:1px solid var(--line);border-radius:10px;
+  color:var(--fg);font:12.5px/1.65 var(--mono);padding:12px 13px;margin:0 0 12px;
+  overflow-x:auto;user-select:all;
+}
+code{font:12.5px var(--mono);color:var(--fg)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin:0 0 14px}
+th{
+  color:var(--faint);font:500 11px/1.5 -apple-system,system-ui,sans-serif;
+  text-transform:uppercase;letter-spacing:.07em;text-align:left;
+  padding:0 12px 7px 0;border-bottom:1px solid var(--line);
+}
+td{
+  color:var(--dim);padding:8px 12px 8px 0;border-bottom:1px solid var(--line);
+  vertical-align:top;
+}
+td:first-child{color:var(--fg);font:12.5px var(--mono);white-space:nowrap}
+.card a{color:var(--accent);text-decoration:none;border-bottom:1px solid #8ce0b840}
+.card a:hover{border-bottom-color:var(--accent)}
+.destructive{color:var(--warn)}
+</style>
+{{end}}
+
+{{define "content"}}
+<h1>hush<span>.</span> from an agent</h1>
+<p class="lede">Two MCP tools. The encryption happens on your machine, so an
+  agent using hush gets the same guarantee a browser does.</p>
+
+<table>
+  <tr><th>Tool</th><th>What it does</th></tr>
+  <tr><td>hush_create</td><td>Encrypts a secret locally, stores the ciphertext, returns a link that works exactly once</td></tr>
+  <tr><td>hush_reveal</td><td>Opens a link and destroys it</td></tr>
+</table>
+
+<p>It is a local binary rather than an endpoint on this server for one reason: if
+  the server did the encrypting, the server could read every secret an agent
+  created, and hush's claim would hold for browser users while quietly not
+  holding for you. <code>hush-mcp</code> is a peer of the browser — it mints the
+  AES-256 key, encrypts, posts only ciphertext, and assembles the
+  <code>#fragment</code> link itself.</p>
+
+<h2>1. Install it</h2>
+<pre>go install github.com/orchard9/hush/cmd/hush-mcp@latest</pre>
+<p>Needs Go 1.26 or newer, and nothing else: the binary imports only the
+  standard library, so there is no dependency to resolve and no service to run.</p>
+
+<p>Most clients do not expand <code>~</code>, so get the absolute path once and
+  paste that everywhere below:</p>
+<pre>echo "$(go env GOPATH)/bin/hush-mcp"</pre>
+
+<h2>2. Register it with your client</h2>
+<p>Every client here launches the same binary over stdio. The JSON shape is the
+  portable part; only VS Code spells the wrapper key differently.</p>
+
+<h3>Claude Code</h3>
+<pre>claude mcp add hush -e HUSH_BASE_URL=https://hush.threesix.ai \
+  -- /Users/you/go/bin/hush-mcp</pre>
+<p>The <code>--</code> is load-bearing: everything after it is the command to
+  launch, so Claude Code stops reading those arguments as its own. Add
+  <code>-s user</code> to get the server in every project rather than this one.
+  <code>claude mcp list</code> then prints
+  <code>hush: … ✔ Connected</code>.</p>
+
+<h3>Codex CLI</h3>
+<pre>codex mcp add hush --env HUSH_BASE_URL=https://hush.threesix.ai \
+  -- /Users/you/go/bin/hush-mcp</pre>
+<p>That writes <code>~/.codex/config.toml</code>. The same thing by hand:</p>
+<pre>[mcp_servers.hush]
+command = "/Users/you/go/bin/hush-mcp"
+env = { "HUSH_BASE_URL" = "https://hush.threesix.ai" }</pre>
+<p>Confirm with <code>codex mcp get hush</code>, or <code>/mcp</code> in a
+  session.</p>
+
+<h3>Gemini CLI</h3>
+<pre>gemini mcp add hush /Users/you/go/bin/hush-mcp \
+  -e HUSH_BASE_URL=https://hush.threesix.ai -s user</pre>
+<p>Without <code>-s user</code> the entry lands in the current project's
+  <code>.gemini/settings.json</code> instead of
+  <code>~/.gemini/settings.json</code>. Confirm with <code>/mcp</code> in a
+  session.</p>
+
+<h3>VS Code</h3>
+<pre>code --add-mcp '{"name":"hush","type":"stdio","command":"/Users/you/go/bin/hush-mcp","env":{"HUSH_BASE_URL":"https://hush.threesix.ai"}}'</pre>
+<p>By hand the file is <code>.vscode/mcp.json</code> for one workspace, or the
+  user-level <code>mcp.json</code> that <strong>MCP: Open User
+  Configuration</strong> opens — and its wrapper key is <code>servers</code>,
+  not <code>mcpServers</code>:</p>
+<pre>{
+  "servers": {
+    "hush": {
+      "type": "stdio",
+      "command": "/Users/you/go/bin/hush-mcp",
+      "env": { "HUSH_BASE_URL": "https://hush.threesix.ai" }
+    }
+  }
+}</pre>
+
+<h3>Claude Desktop, Cursor, omp, anything else</h3>
+<p>One block, in that client's config file:</p>
+<pre>{
+  "mcpServers": {
+    "hush": {
+      "type": "stdio",
+      "command": "/Users/you/go/bin/hush-mcp",
+      "env": { "HUSH_BASE_URL": "https://hush.threesix.ai" }
+    }
+  }
+}</pre>
+<table>
+  <tr><th>Client</th><th>File</th></tr>
+  <tr><td>Claude Desktop</td><td>macOS <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>, Windows <code>%APPDATA%\Claude\claude_desktop_config.json</code> — then quit the app completely and reopen it</td></tr>
+  <tr><td>Cursor</td><td><code>~/.cursor/mcp.json</code> for every project, <code>.cursor/mcp.json</code> for one</td></tr>
+  <tr><td>omp</td><td><code>~/.omp/agent/mcp.json</code></td></tr>
+</table>
+<p>From a clone of the repo, <code>make mcp</code> does the omp case for you: it
+  builds the binary, proves the handshake before wiring anything, then rewrites
+  only hush's entry — backing the file up and leaving every other server
+  alone.</p>
+
+<h2>3. Prove it before you trust it</h2>
+<p>A misconfigured stdio server reaches you as an opaque “server disconnected”.
+  Run the handshake yourself instead, where the error is legible:</p>
+<pre>printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | /Users/you/go/bin/hush-mcp</pre>
+<p>Two JSON lines come back: the first names the server <code>hush</code>, the
+  second lists <code>hush_create</code> and <code>hush_reveal</code>. That is
+  the same binary, launched the same way, that your client will run.</p>
+
+<h2>4. Use it</h2>
+<p>Ask in words; the agent picks the tool.</p>
+<ul>
+  <li>“Put this in a hush link so I can send it: <em>&lt;the credential&gt;</em>”</li>
+  <li>“Open this hush link: <em>https://hush.threesix.ai/s/…#…</em>”</li>
+</ul>
+<p>Three behaviours worth knowing before an agent calls either tool:</p>
+<ul>
+  <li><span class="destructive">hush_reveal destroys the link.</span> After it
+    returns, the intended recipient cannot open it. An agent that reveals a link
+    “just to check” has burned it.</li>
+  <li><strong>The link is shown once.</strong> hush cannot rebuild it, because
+    the key it carries was never sent to the server.</li>
+  <li><strong>The <code>#fragment</code> is the key.</strong> Chat clients and
+    mail rewriters truncate fragments, and a link without one carries no key.
+    The tool says exactly that, without touching the secret.</li>
+</ul>
+
+<h2>Configuration</h2>
+<table>
+  <tr><th>Variable</th><th>Meaning</th></tr>
+  <tr><td>HUSH_BASE_URL</td><td>Which deployment <code>hush_create</code> posts to. Defaults to <code>https://hush.threesix.ai</code></td></tr>
+  <tr><td>HUSH_CREATE_TOKEN</td><td>Only for a deployment that has closed anonymous create. Unset is the normal case</td></tr>
+</table>
+<p><code>hush_reveal</code> ignores both and reveals against the link's own
+  origin. A link minted by another hush deployment would be meaningless here,
+  and reporting it <em>gone</em> would be a lie about a secret nobody had
+  touched.</p>
+
+<h2>When a client will not connect</h2>
+<ul>
+  <li>Use the absolute path: most clients do not expand <code>~</code>.</li>
+  <li>Restart the client. Claude Desktop needs a full quit, not a window close.</li>
+  <li>Check the wrapper key — <code>servers</code> in VS Code,
+    <code>mcpServers</code> everywhere else.</li>
+  <li>Ask the client: <code>claude mcp list</code>,
+    <code>codex mcp get hush</code>, or <code>/mcp</code> in a session. VS Code
+    logs to <strong>Output → MCP</strong>, Claude Desktop to
+    <code>~/Library/Logs/Claude/mcp*.log</code>.</li>
+  <li>A <em>gone</em> error is not a connection fault: that link was already
+    opened, expired, or never existed. If you did not open it, assume someone
+    else did and rotate the secret.</li>
+</ul>
+
+<p>Source: <a href="https://github.com/orchard9/hush">github.com/orchard9/hush</a>.</p>
+{{end}}
+
+{{define "nav"}} · <a href="/">create a secret</a>{{end}}
+
+{{/* This page runs no script. It does not parse templates/crypto.html, and it
+     defines the shell's two script hooks as nothing, so what is served here is
+     prose and only prose — no code on this page can reach a key. */}}
+{{define "crypto"}}{{end}}
+{{define "script"}}{{end}}

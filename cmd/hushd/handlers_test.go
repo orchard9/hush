@@ -39,6 +39,7 @@ func testApp(t *testing.T) (http.Handler, *store.Memory) {
 	app := chassis.New(chassis.Config{Service: "hush", Env: "dev", MaxBodyBytes: 128 * 1024}, log)
 	app.Get("/", srv.handleCreatePage)
 	app.Get("/s/{id}", srv.handleRevealPage)
+	app.Get("/mcp", srv.handleMCPPage)
 	app.Route("/api", func(r *chassis.Router) {
 		r.Post("/secrets", srv.handleCreate)
 		r.Post("/secrets/{id}/reveal", srv.handleReveal)
@@ -306,7 +307,7 @@ func TestPagesShipTheClientSideCrypto(t *testing.T) {
 
 func TestPagesAreNotCacheable(t *testing.T) {
 	h, _ := testApp(t)
-	for _, path := range []string{"/", "/s/" + strings.Repeat("A", 43)} {
+	for _, path := range []string{"/", "/s/" + strings.Repeat("A", 43), "/mcp"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -328,7 +329,7 @@ func TestPagesAreNotCacheable(t *testing.T) {
 func TestPagesSendOneNonceCSPThatPermitsTheirOwnInlineCode(t *testing.T) {
 	h, _ := testApp(t)
 
-	for _, path := range []string{"/", "/s/" + strings.Repeat("A", 43)} {
+	for _, path := range []string{"/", "/s/" + strings.Repeat("A", 43), "/mcp"} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
@@ -407,4 +408,27 @@ func cspNonce(t *testing.T, path, policy string) string {
 		t.Fatalf("%s CSP %q has a malformed nonce source", path, policy)
 	}
 	return rest[:j]
+}
+
+// The MCP page is prose: it tells a reader how to install a binary and what to
+// paste into a client config. It executes the same template shell as the two
+// product pages, so a broken block override renders a 500 or a half page, and
+// it is the one page whose CSP has no script to permit. Both are the point:
+// nothing on this page can read anything.
+func TestTheMCPPageIsProseWithNoScript(t *testing.T) {
+	h, _ := testApp(t)
+
+	r := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /mcp = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("GET /mcp Content-Type = %q, want text/html", ct)
+	}
+	if body := w.Body.String(); strings.Contains(body, "<script") {
+		t.Fatal("the MCP page ships a <script> — it is prose, and the shell's crypto belongs to the pages that encrypt")
+	}
 }

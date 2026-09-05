@@ -104,10 +104,11 @@ func run() error {
 		return nil
 	})
 
-	// Pages: no storage access, no rate limit. A link previewer hitting either
-	// of these must be free and harmless.
+	// Pages: no storage access, no rate limit. A link previewer hitting any of
+	// these must be free and harmless.
 	app.Get("/", srv.handleCreatePage)
 	app.Get("/s/{id}", srv.handleRevealPage)
+	app.Get("/mcp", srv.handleMCPPage)
 
 	limiter := &redisLimiter{store: rdb, cfg: cfg, metrics: metrics}
 	app.Route("/api", func(r *chassis.Router) {

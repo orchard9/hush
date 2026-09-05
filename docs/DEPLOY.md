@@ -112,7 +112,7 @@ first. But the committed image tag cannot be `:latest`: the cluster's
 cannot pin a rollback.
 
 So the manifest carries `:bootstrap`, which is policy-legal and does not exist.
-Apply it, then build once by hand:
+Apply everything, then build once by hand:
 
 ```bash
 make deploy-manifests        # pod sits in ImagePullBackOff — expected
@@ -121,6 +121,13 @@ SHA=$(git rev-parse --short=8 HEAD)
 kubectl -n projects create job hush-build-$SHA --dry-run=client -o yaml ... # see below
 kubectl -n projects set image deployment/hush hushd=registry.threesix.ai/hush/api:$SHA
 ```
+
+That `:bootstrap` tag is also why the public route lives in its own file,
+`deployments/k8s/ingress.yaml`. A new public path — every handler needs one, or
+it 404s at the edge while working fine in `make dev` — is
+`make deploy-ingress`, which applies that object alone. Applying the whole
+directory to publish a path would roll the workload back onto the unpullable
+bootstrap image.
 
 The build Job, which is what Woodpecker's Kaniko step does by hand:
 

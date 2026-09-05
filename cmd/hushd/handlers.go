@@ -23,7 +23,7 @@ type Server struct {
 // pageData is the same for every render: the ciphertext cap, so the browser
 // enforces what the server enforces, and the default lifetime, so the page
 // states the TTL the server will apply. It carries nothing request-specific,
-// which is why both pages are safely static.
+// which is why every page is safely static.
 func (s *Server) pageData() web.Data {
 	return web.Data{
 		MaxCiphertextBytes: secret.MaxCiphertextBytes,
@@ -48,6 +48,12 @@ func (s *Server) handleCreatePage(c *chassis.Context) error {
 // is what answers. Validating here would make this endpoint an id oracle.
 func (s *Server) handleRevealPage(c *chassis.Context) error {
 	return s.pages.Reveal(c.Writer(), s.pageData())
+}
+
+// handleMCPPage serves GET /mcp: how to install the local MCP server and wire
+// it into a client. Static prose, no storage, no script.
+func (s *Server) handleMCPPage(c *chassis.Context) error {
+	return s.pages.MCP(c.Writer(), s.pageData())
 }
 
 type createRequest struct {

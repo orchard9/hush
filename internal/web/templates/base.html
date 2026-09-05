@@ -80,8 +80,13 @@ button.ghost:hover{background:none;color:var(--fg);border-color:var(--line-lit)}
 .hide{display:none}
 footer{margin:14px 2px 0;color:var(--faint);font-size:11.5px;line-height:1.5}
 footer code{font:11px var(--mono);color:var(--dim)}
+footer a{color:var(--dim);text-decoration:none;border-bottom:1px solid var(--line)}
+footer a:hover{color:var(--fg);border-color:var(--line-lit)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
+<!-- Page-specific CSS, nonced by the page that defines it. Empty for the two
+     product pages, which need nothing beyond the shell above. -->
+{{block "styles" .}}{{end}}
 </head>
 <body>
 <main>
@@ -90,51 +95,12 @@ footer code{font:11px var(--mono);color:var(--dim)}
 </div>
 <footer>
   Encrypted in your browser. The key travels in the link's <code>#fragment</code>,
-  which browsers never send to a server.
+  which browsers never send to a server.{{block "nav" .}}{{end}}
 </footer>
 </main>
-<script nonce="{{.Nonce}}">
-// Shared crypto. AES-256-GCM via WebCrypto; the key is generated here, never
-// transmitted, and carried only in the URL fragment.
-//
-// b64u: base64url without padding, matching Go's base64.RawURLEncoding on the
-// server so the wire format has exactly one spelling.
-const b64u = {
-  enc(bytes) {
-    let s = ""; for (const b of bytes) s += String.fromCharCode(b);
-    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  },
-  dec(str) {
-    const p = str.replace(/-/g, "+").replace(/_/g, "/");
-    const raw = atob(p + "=".repeat((4 - (p.length % 4)) % 4));
-    const out = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-    return out;
-  },
-};
-
-async function seal(plaintext) {
-  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
-  // 96-bit nonce is the AES-GCM standard size and is generated per secret. It
-  // is prepended to the ciphertext rather than sent separately so a stored blob
-  // is self-contained.
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const body = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(plaintext)));
-  const blob = new Uint8Array(nonce.length + body.length);
-  blob.set(nonce, 0); blob.set(body, nonce.length);
-  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
-  return { ciphertext: b64u.enc(blob), key: b64u.enc(rawKey) };
-}
-
-async function open(ciphertext, keyStr) {
-  const blob = b64u.dec(ciphertext);
-  const key = await crypto.subtle.importKey("raw", b64u.dec(keyStr), "AES-GCM", false, ["decrypt"]);
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: blob.slice(0, 12) }, key, blob.slice(12));
-  return new TextDecoder().decode(plain);
-}
-</script>
+<!-- The pages that encrypt pull in templates/crypto.html, which defines this.
+     The MCP page defines it empty: it runs no script at all. -->
+{{template "crypto" .}}
 {{template "script" .}}
 </body>
 </html>{{end}}

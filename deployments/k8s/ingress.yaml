@@ -1,0 +1,57 @@
+# hush's public route. Split out of hush.yaml on purpose: that file pins the
+# Deployment's image to a `:bootstrap` tag that does not exist, so re-applying
+# it to publish a new path would roll the workload onto an unpullable image.
+# Adding a route is therefore:
+#
+#   make deploy-ingress
+#
+# and it touches nothing but this object.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hush
+  namespace: projects
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [hush.threesix.ai]
+      secretName: hush-tls
+  rules:
+    - host: hush.threesix.ai
+      http:
+        paths:
+          # The paths are enumerated deliberately, and `/` is Exact rather than
+          # Prefix. A Prefix `/` would route EVERYTHING, publishing /metrics,
+          # /healthz and /readyz to the internet. /metrics leaks how many
+          # secrets are created and when; the others are just noise. Enumerating
+          # instead means Traefik 404s them at the edge and there is no
+          # basic-auth middleware to maintain and get wrong.
+          #
+          # A handler without a path here is a 404 at the edge on a route that
+          # works in `make dev`. Adding one is two changes, not one.
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: hush
+                port: { name: http }
+          - path: /mcp
+            pathType: Exact
+            backend:
+              service:
+                name: hush
+                port: { name: http }
+          - path: /s/
+            pathType: Prefix
+            backend:
+              service:
+                name: hush
+                port: { name: http }
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: hush
+                port: { name: http }

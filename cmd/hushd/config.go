@@ -34,7 +34,7 @@ type Config struct {
 	TrustedProxyHops int
 
 	// AllowOrigins is the CORS allowlist. Empty is correct for the deployed
-	// service: both pages are same-origin, so no cross-origin caller is
+	// service: every page is same-origin, so no cross-origin caller is
 	// legitimate.
 	AllowOrigins []string
 

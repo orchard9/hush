@@ -90,5 +90,16 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$BASE/api/secrets" \
 [ "$code" != "201" ] || fail "the server ACCEPTED a plaintext field — the zero-knowledge claim is broken"
 pass "a plaintext field is refused ($code)"
 
+# --- the agent instructions are actually served ----------------------------
+# A release that rolls a stale image, or a template that fails to execute,
+# shows up here rather than as a 404 someone finds later. The install command
+# is the page's whole point, so that is what is checked.
+MCP_PAGE=$(curl -sS -w '\n%{http_code}' "$BASE/mcp")
+[ "$(printf '%s' "$MCP_PAGE" | tail -n1)" = "200" ] || fail "GET /mcp returned $(printf '%s' "$MCP_PAGE" | tail -n1)"
+for want in 'go install github.com/orchard9/hush/cmd/hush-mcp' 'hush_create' 'hush_reveal'; do
+  printf '%s' "$MCP_PAGE" | grep -qF "$want" || fail "/mcp no longer contains '$want'"
+done
+pass "/mcp serves the MCP install instructions"
+
 echo
 printf '\033[32mall smoke checks passed\033[0m\n'

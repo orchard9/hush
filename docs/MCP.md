@@ -10,20 +10,24 @@
 ## Install
 
 ```bash
-make mcp
+go install github.com/orchard9/hush/cmd/hush-mcp@latest
 ```
 
-That builds the binary to `~/.local/bin/hush-mcp`, proves the MCP handshake
-works before wiring anything, and adds a `hush` entry to
-`~/.omp/agent/mcp.json` — backing the file up first and leaving every other
-server alone. Restart omp to pick it up.
+That is the whole install, from anywhere, with no clone: `cmd/hush-mcp` imports
+only the standard library, so the module graph never reaches the private
+`go-chassis` dependency that `cmd/hushd` needs.
+
+From a clone, `make mcp` does the omp case end to end — it builds to
+`~/.local/bin/hush-mcp`, proves the MCP handshake works before wiring anything,
+then adds a `hush` entry to `~/.omp/agent/mcp.json`, backing the file up first
+and leaving every other server alone. Restart omp to pick it up.
 
 ```json
 {
   "mcpServers": {
     "hush": {
       "type": "stdio",
-      "command": "/Users/you/.local/bin/hush-mcp",
+      "command": "/Users/you/go/bin/hush-mcp",
       "env": { "HUSH_BASE_URL": "https://hush.threesix.ai" },
       "timeout": 20000
     }
@@ -31,8 +35,16 @@ server alone. Restart omp to pick it up.
 }
 ```
 
-The same file shape works for Claude Code (`~/.claude.json`), Cursor and VS
-Code — the stdio transport is the portable part.
+That shape is what Claude Desktop, Cursor and omp read. VS Code spells the
+wrapper key `servers`, Codex uses TOML (`[mcp_servers.hush]`), and Claude Code,
+Codex and Gemini each have an `mcp add` subcommand that writes it for you. The
+stdio transport is the portable part.
+
+**The user-facing copy of all of that is served by the deployment itself at
+<https://hush.threesix.ai/mcp>**, rendered from
+`internal/web/templates/mcp.html` and checked on every release by
+`scripts/smoke.sh`. A client-specific change belongs in that template; this
+file keeps what a reader of the repo needs and the page does not.
 
 ## Why it runs locally instead of being an endpoint on hushd
 

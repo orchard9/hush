@@ -1,0 +1,47 @@
+{{define "crypto"}}<script nonce="{{.Nonce}}">
+// Shared crypto. AES-256-GCM via WebCrypto; the key is generated here, never
+// transmitted, and carried only in the URL fragment.
+//
+// It lives in its own partial rather than in base.html so that a page which
+// encrypts nothing — the MCP instructions — carries none of it. That page
+// satisfies the shell's {{`{{template "crypto"}}`}} call with an empty
+// definition instead of parsing this file.
+//
+// b64u: base64url without padding, matching Go's base64.RawURLEncoding on the
+// server so the wire format has exactly one spelling.
+const b64u = {
+  enc(bytes) {
+    let s = ""; for (const b of bytes) s += String.fromCharCode(b);
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  },
+  dec(str) {
+    const p = str.replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(p + "=".repeat((4 - (p.length % 4)) % 4));
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  },
+};
+
+async function seal(plaintext) {
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  // 96-bit nonce is the AES-GCM standard size and is generated per secret. It
+  // is prepended to the ciphertext rather than sent separately so a stored blob
+  // is self-contained.
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const body = new Uint8Array(await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: nonce }, key, new TextEncoder().encode(plaintext)));
+  const blob = new Uint8Array(nonce.length + body.length);
+  blob.set(nonce, 0); blob.set(body, nonce.length);
+  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+  return { ciphertext: b64u.enc(blob), key: b64u.enc(rawKey) };
+}
+
+async function open(ciphertext, keyStr) {
+  const blob = b64u.dec(ciphertext);
+  const key = await crypto.subtle.importKey("raw", b64u.dec(keyStr), "AES-GCM", false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: blob.slice(0, 12) }, key, blob.slice(12));
+  return new TextDecoder().decode(plain);
+}
+</script>{{end}}

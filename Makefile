@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 .PHONY: help fmt vet test test-redis build run dev dev-stop smoke vendor verify ci \
-	mcp mcp-install release deploy-manifests deploy-status logs alerts-check
+	mcp mcp-install release deploy-manifests deploy-ingress deploy-status logs alerts-check
 
 # Local development Redis. A real server, not a mock: the one-time guarantee
 # rests on GETDEL being atomic, and a fake cannot prove that.
@@ -76,8 +76,14 @@ mcp: ## Build and install the MCP server, then register it with omp
 mcp-install:
 	@./scripts/install-mcp.sh
 
-deploy-manifests: ## Apply the k8s manifests (do this BEFORE the first push)
-	@KUBECONFIG=$(KUBECONFIG_FILE) kubectl apply -f deployments/k8s/hush.yaml
+deploy-manifests: ## Apply every k8s manifest (do this BEFORE the first push)
+	@KUBECONFIG=$(KUBECONFIG_FILE) kubectl apply -f deployments/k8s/
+
+# A new public route is a handler AND an Ingress path. This applies only the
+# Ingress: hush.yaml pins a `:bootstrap` image that does not exist, so applying
+# the whole directory to publish a path would roll the workload onto it.
+deploy-ingress: ## Apply just the public route
+	@KUBECONFIG=$(KUBECONFIG_FILE) kubectl apply -f deployments/k8s/ingress.yaml
 
 deploy-status: ## Rollout, pods, ingress and certificate
 	@KUBECONFIG=$(KUBECONFIG_FILE) kubectl -n $(NS) rollout status deployment/hush --timeout=90s

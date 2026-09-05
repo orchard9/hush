@@ -120,6 +120,7 @@ backstop.
 ```
 GET  /                     create page (static HTML+JS, no storage access)
 GET  /s/{id}               reveal page (static HTML+JS, no storage access)
+GET  /mcp                  MCP install instructions (static HTML, no script)
 POST /api/secrets          store ciphertext                    rate limited
 POST /api/secrets/{id}/reveal   GETDEL, destroy, return once   rate limited
 GET  /healthz              liveness — 200 while draining
@@ -135,9 +136,9 @@ rate limiter and templates — not a framework.
 ### The pages override the chassis CSP
 
 The chassis policy is written for a JSON API: `default-src 'none';
-frame-ancestors 'none'`. The two pages are HTML with inline script and inline
-style, so `internal/web.render` replaces that header with a per-response
-nonce policy:
+frame-ancestors 'none'`. The pages are HTML with inline style, and the two that
+encrypt also carry inline script, so `internal/web.render` replaces that header
+with a per-response nonce policy:
 
 ```
 default-src 'none'; script-src 'nonce-<r>'; style-src 'nonce-<r>';
@@ -163,10 +164,12 @@ Three decisions, each with a failure it prevents:
   page — `TestTheRevealPageDoesNotDiscloseWhetherASecretExists` compares the
   page with it masked and asserts constant length.
 
-The public Ingress routes `/` (exact), `/s/` and `/api/` only. `/metrics`,
-`/healthz` and `/readyz` share the port but are unreachable from the internet;
-vmagent scrapes the pod IP directly. This is why there is no metrics basic-auth
-middleware to maintain.
+The public Ingress routes `/` (exact), `/mcp` (exact), `/s/` and `/api/` only.
+`/metrics`, `/healthz` and `/readyz` share the port but are unreachable from
+the internet; vmagent scrapes the pod IP directly. This is why there is no
+metrics basic-auth middleware to maintain. A new public route is therefore two
+changes — the handler and an Ingress path — and forgetting the second one is a
+404 at the edge on a route that works in `make dev`.
 
 ## Abuse posture
 

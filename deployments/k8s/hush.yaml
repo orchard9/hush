@@ -2,10 +2,12 @@
 # the pipeline's deploy step runs `kubectl set image` and needs a Deployment to
 # set it on.
 #
-#   KUBECONFIG=~/.kube/orchard9-k3sf.yaml kubectl apply -f deployments/k8s/hush.yaml
+#   KUBECONFIG=~/.kube/orchard9-k3sf.yaml kubectl apply -f deployments/k8s/
 #
-# Everything hush needs is here: the credential, the workload, the Service, the
-# network boundary and the public route.
+# The credential, the workload, the Service and the network boundary. The public
+# route is deployments/k8s/ingress.yaml, kept separate because the Deployment
+# below pins a `:bootstrap` image that does not exist — re-applying this file to
+# publish a new path would roll the workload onto an unpullable image.
 ---
 # The Redis credential. hush connects as its OWN Redis ACL user, scoped to
 # `~hush:*` with a minimal command set (+ping +set +getdel +incr +pexpire
@@ -207,43 +209,3 @@ spec:
               kubernetes.io/metadata.name: databases
       ports:
         - { protocol: TCP, port: 6379 }
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hush
-  namespace: projects
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  tls:
-    - hosts: [hush.threesix.ai]
-      secretName: hush-tls
-  rules:
-    - host: hush.threesix.ai
-      http:
-        paths:
-          # The paths are enumerated deliberately, and `/` is Exact rather than
-          # Prefix. A Prefix `/` would route EVERYTHING, publishing /metrics,
-          # /healthz and /readyz to the internet. /metrics leaks how many
-          # secrets are created and when; the others are just noise. Enumerating
-          # instead means Traefik 404s them at the edge and there is no
-          # basic-auth middleware to maintain and get wrong.
-          - path: /
-            pathType: Exact
-            backend:
-              service:
-                name: hush
-                port: { name: http }
-          - path: /s/
-            pathType: Prefix
-            backend:
-              service:
-                name: hush
-                port: { name: http }
-          - path: /api/
-            pathType: Prefix
-            backend:
-              service:
-                name: hush
-                port: { name: http }

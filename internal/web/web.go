@@ -1,5 +1,5 @@
-// Package web serves hush's two pages. Both are static: they read no storage,
-// so a link previewer fetching either one cannot destroy a secret.
+// Package web serves hush's pages. All of them are static: they read no
+// storage, so a link previewer fetching any of them cannot destroy a secret.
 package web
 
 import (
@@ -15,11 +15,12 @@ import (
 //go:embed templates/*.html
 var files embed.FS
 
-// Pages renders the create and reveal pages. Templates are embedded, so the
-// container carries no template directory to go missing at runtime.
+// Pages renders the create, reveal and MCP pages. Templates are embedded, so
+// the container carries no template directory to go missing at runtime.
 type Pages struct {
 	create *template.Template
 	reveal *template.Template
+	mcp    *template.Template
 }
 
 // Data is everything a page needs. MaxCiphertextBytes is passed through so the
@@ -44,16 +45,27 @@ type view struct {
 // New parses the embedded templates. It fails at boot rather than on first
 // request: a template error is a build defect and should not wait for traffic
 // to surface.
+//
+// The two pages that encrypt parse crypto.html; the MCP page does not, and
+// defines the shell's "crypto" block empty instead. An empty definition cannot
+// REPLACE a non-empty one — text/template treats an empty body as no
+// definition — so the shell holds the call and the partial holds the code.
 func New() (*Pages, error) {
-	create, err := template.ParseFS(files, "templates/base.html", "templates/create.html")
+	create, err := template.ParseFS(files,
+		"templates/base.html", "templates/crypto.html", "templates/create.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse create template: %w", err)
 	}
-	reveal, err := template.ParseFS(files, "templates/base.html", "templates/reveal.html")
+	reveal, err := template.ParseFS(files,
+		"templates/base.html", "templates/crypto.html", "templates/reveal.html")
 	if err != nil {
 		return nil, fmt.Errorf("parse reveal template: %w", err)
 	}
-	return &Pages{create: create, reveal: reveal}, nil
+	mcp, err := template.ParseFS(files, "templates/base.html", "templates/mcp.html")
+	if err != nil {
+		return nil, fmt.Errorf("parse mcp template: %w", err)
+	}
+	return &Pages{create: create, reveal: reveal, mcp: mcp}, nil
 }
 
 // Create writes the create page.
@@ -70,6 +82,14 @@ func (p *Pages) Create(w http.ResponseWriter, d Data) error {
 // a capability.
 func (p *Pages) Reveal(w http.ResponseWriter, d Data) error {
 	return render(w, p.reveal, d)
+}
+
+// MCP writes the page documenting the MCP server: how to install it, how to
+// register it with a client, and what the two tools do. It is prose only — the
+// template overrides the shell's script blocks to nothing, so this page ships
+// no JavaScript at all.
+func (p *Pages) MCP(w http.ResponseWriter, d Data) error {
+	return render(w, p.mcp, d)
 }
 
 // contentSecurityPolicy is the page policy, keyed to one per-response nonce.
@@ -97,7 +117,7 @@ func contentSecurityPolicy(nonce string) string {
 		// The pages fetch /api/secrets and /api/secrets/{id}/reveal. Same-origin
 		// only: there is no other host this page may ever talk to.
 		"; connect-src 'self'" +
-		// No image, font, media or frame is loaded by either page, so every
+		// No image, font, media or frame is loaded by any page, so every
 		// remaining fetch directive stays at default-src 'none'.
 		"; form-action 'none'" +
 		"; base-uri 'none'" +
@@ -113,7 +133,7 @@ func render(w http.ResponseWriter, t *template.Template, d Data) error {
 	}
 
 	h := w.Header()
-	// no-store on both pages: a cached create page is harmless, but a cached
+	// no-store everywhere: a cached create page is harmless, but a cached
 	// reveal page in a shared proxy would be a copy of a one-time URL.
 	h.Set("Cache-Control", "no-store, max-age=0")
 	h.Set("Content-Type", "text/html; charset=utf-8")

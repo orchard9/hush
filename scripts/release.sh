@@ -17,6 +17,12 @@ set -euo pipefail
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/orchard9-k3sf.yaml}"
 NS="${NS:-projects}"
 HOST="${HOST:-hush.threesix.ai}"
+# The Gitea repo Kaniko clones, and the remote that points at it. Both are
+# named once: the guard below has to check the ref that gets BUILT, and a
+# guard that checks a different remote is worse than no guard.
+GIT_CONTEXT="${GIT_CONTEXT:-git://git.threesix.ai/jordan/hush.git#refs/heads/main}"
+GIT_REMOTE="${GIT_REMOTE:-origin}"
+GIT_BRANCH="${GIT_BRANCH:-main}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -29,9 +35,16 @@ if [ -n "$(git status --porcelain)" ]; then
   git status --short >&2
   exit 1
 fi
-if [ -n "$(git log --oneline @{upstream}..HEAD 2>/dev/null)" ]; then
-  echo "refusing: HEAD is not pushed to origin (Gitea). Kaniko clones from there." >&2
-  git log --oneline '@{upstream}..HEAD' >&2
+# `@{upstream}` is NOT the right comparison: this checkout tracks a mirror, so
+# HEAD can be pushed there while Gitea — the repo Kaniko clones — is behind,
+# and the build would silently produce the previous commit. Compare against the
+# branch that actually gets built.
+git fetch --quiet "$GIT_REMOTE" "$GIT_BRANCH"
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse FETCH_HEAD)" ]; then
+  echo "refusing: HEAD is not what $GIT_REMOTE/$GIT_BRANCH points at, and Kaniko clones from there." >&2
+  echo "  HEAD                    $(git rev-parse --short=8 HEAD) $(git log -1 --format=%s HEAD)" >&2
+  echo "  $GIT_REMOTE/$GIT_BRANCH $(git rev-parse --short=8 FETCH_HEAD) $(git log -1 --format=%s FETCH_HEAD)" >&2
+  echo "Push to $GIT_REMOTE first: git push $GIT_REMOTE $GIT_BRANCH" >&2
   exit 1
 fi
 
@@ -63,7 +76,7 @@ spec:
           image: gcr.io/kaniko-project/executor:v1.23.2
           args:
             # The Gitea repo is public, so the git context needs no credential.
-            - --context=git://git.threesix.ai/jordan/hush.git#refs/heads/main
+            - --context=$GIT_CONTEXT
             - --dockerfile=Dockerfile
             - --destination=$IMAGE
             # The internal Zot registry serves a self-signed cert.

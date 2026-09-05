@@ -89,7 +89,15 @@ public ingress** — they are reachable in-cluster only.
 `cmd/hush-mcp` is a stdio MCP server exposing two tools, `hush_create` and
 `hush_reveal`. It runs **locally** and does the encryption on your machine, so
 using hush from an agent preserves the same zero-knowledge property as using it
-from a browser. See [docs/MCP.md](docs/MCP.md).
+from a browser.
+
+```bash
+go install github.com/orchard9/hush/cmd/hush-mcp@latest
+```
+
+Per-client configuration — Claude Code, Codex, Gemini, VS Code, Claude Desktop,
+Cursor, omp — is served by the deployment at
+<https://hush.threesix.ai/mcp>. [docs/MCP.md](docs/MCP.md) covers the design.
 
 ## Limits
 
@@ -105,7 +113,7 @@ from a browser. See [docs/MCP.md](docs/MCP.md).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — how it works and why each choice
 - [docs/DEPLOY.md](docs/DEPLOY.md) — pipeline, DNS, credentials, first deploy
 - [docs/OPERATIONS.md](docs/OPERATIONS.md) — alert runbook, log queries, failure modes
-- [docs/MCP.md](docs/MCP.md) — the MCP server and how to install it
+- [docs/MCP.md](docs/MCP.md) — the MCP server, its install, and why it is local
 
 ## Development
 
