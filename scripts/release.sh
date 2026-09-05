@@ -72,18 +72,26 @@ echo "  build resolves git+registry to traefik at $TRAEFIK_IP"
 # re-created; replacing it is the idempotent thing to do.
 kubectl -n "$NS" delete job "$JOB" --ignore-not-found >/dev/null
 
+# NOTE the label: `app: hush-build`, NOT `app: hush`. hush's NetworkPolicy
+# selects `app: hush` and permits egress to DNS and Redis only — a true
+# statement about the SERVER, and a build pod that inherits it cannot reach
+# Docker Hub, gcr.io, Gitea or the registry. kube-router REJECTS, so that
+# arrives as `connection refused` from whichever host the build happened to
+# need next, intermittently, because policy sync leaves windows where the rules
+# are briefly absent. Measured 2026-09-05: five consecutive kaniko builds
+# failed on three different external hosts under `app: hush`.
 kubectl -n "$NS" apply -f - >/dev/null <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: $JOB
-  labels: { app: hush, component: build }
+  labels: { app: hush-build, component: build }
 spec:
   backoffLimit: 1
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
-      labels: { app: hush, component: build }
+      labels: { app: hush-build, component: build }
     spec:
       restartPolicy: Never
       # See the note above: the public address is not reliably reachable from a
