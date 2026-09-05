@@ -53,6 +53,21 @@ IMAGE="registry.threesix.ai/hush/api:$SHA"
 JOB="hush-build-$SHA"
 echo "releasing $SHA"
 
+# Kaniko clones git.threesix.ai and pushes registry.threesix.ai. Both names
+# resolve to the cluster's PUBLIC address, and reaching that from inside a pod
+# takes a hairpin path that drops connections: measured 2026-09-05, 14 of 24
+# requests from a pod succeeded, four consecutive kaniko pushes were refused,
+# and Traefik's own ClusterIP answered 8 of 8. One Traefik serves both names, so
+# the build resolves them to that ClusterIP and never leaves the cluster. The
+# pushed image is still named registry.threesix.ai/hush/api:SHA, which is what
+# the kubelet pulls — this changes the route, not the reference.
+TRAEFIK_IP="$(kubectl -n kube-system get svc traefik -o jsonpath='{.spec.clusterIP}')"
+if [ -z "$TRAEFIK_IP" ]; then
+  echo "refusing: kube-system/traefik has no ClusterIP, so the build has no in-cluster route" >&2
+  exit 1
+fi
+echo "  build resolves git+registry to traefik at $TRAEFIK_IP"
+
 # A previous attempt at the same SHA leaves a completed Job that cannot be
 # re-created; replacing it is the idempotent thing to do.
 kubectl -n "$NS" delete job "$JOB" --ignore-not-found >/dev/null
@@ -71,6 +86,11 @@ spec:
       labels: { app: hush, component: build }
     spec:
       restartPolicy: Never
+      # See the note above: the public address is not reliably reachable from a
+      # pod, and the ClusterIP is.
+      hostAliases:
+        - ip: $TRAEFIK_IP
+          hostnames: [git.threesix.ai, registry.threesix.ai]
       containers:
         - name: kaniko
           image: gcr.io/kaniko-project/executor:v1.23.2

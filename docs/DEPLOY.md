@@ -129,34 +129,21 @@ it 404s at the edge while working fine in `make dev` — is
 directory to publish a path would roll the workload back onto the unpullable
 bootstrap image.
 
-The build Job, which is what Woodpecker's Kaniko step does by hand:
+The build Job itself is not reproduced here. `scripts/release.sh` emits it, and
+a copy in this file drifts from the copy that runs — which is how the script's
+own push guard ended up checking the wrong remote. Read it there; `make
+release` is the same path, and it needs no CI credential because the Gitea repo
+is public.
 
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata: { name: hush-build, namespace: projects }
-spec:
-  backoffLimit: 1
-  ttlSecondsAfterFinished: 3600
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: kaniko
-          image: gcr.io/kaniko-project/executor:v1.23.2
-          args:
-            - --context=git://git.threesix.ai/jordan/hush.git#refs/heads/main
-            - --dockerfile=Dockerfile
-            - --destination=registry.threesix.ai/hush/api:SHA
-            - --skip-tls-verify
-            - --skip-tls-verify-pull
-            - --single-snapshot
-          resources:
-            requests: { cpu: 500m, memory: 1Gi }
-            limits: { cpu: "2", memory: 3Gi }
-```
-
-The git context needs no credential because the Gitea repo is public.
+One thing about that Job is worth stating outside the script, because it is a
+property of the cluster rather than of hush: `git.threesix.ai` and
+`registry.threesix.ai` resolve to the cluster's public address, and reaching
+that address from inside a pod hairpins unreliably. Measured 2026-09-05: 14 of
+24 requests from a pod succeeded, four consecutive kaniko pushes were refused
+with `connection refused`, and Traefik's ClusterIP answered 8 of 8. The Job
+therefore carries `hostAliases` pinning both names to that ClusterIP. Anything
+else that builds in-cluster — Woodpecker's Kaniko step included — is exposed to
+the same hairpin and will fail the same way, intermittently.
 
 ## Woodpecker: activated
 
