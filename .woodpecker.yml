@@ -35,6 +35,10 @@ steps:
     image: woodpeckerci/plugin-kaniko
     settings:
       registry: registry.threesix.ai
+      # ci-pusher: registry.threesix.ai refuses anonymous pushes (DESK-120; k3s-fleet docs/operations/registry-push-auth.md)
+      username: ci-pusher
+      password:
+        from_secret: registry_push_password
       repo: hush/api
       tags:
         - latest
